@@ -67,6 +67,31 @@ def immagine_esiste(codice):
         return False
 
 
+IMG_N = IMG.replace("%s_1.jpg", "%s_%d.jpg")
+MAX_FOTO = 10
+
+
+def varianti_online(codice):
+    """Numeri delle foto (_1 ... _10) che esistono online per questo codice."""
+    def prova(n):
+        try:
+            return scarica(IMG_N % (codice, n) + "?sw=100&sh=100", testa=True) == 200
+        except Exception:
+            return False
+    numeri = list(range(1, MAX_FOTO + 1))
+    with ThreadPoolExecutor(10) as ex:
+        return [n for n, ok in zip(numeri, ex.map(prova, numeri)) if ok]
+
+
+def invia_foto(codice, titolo):
+    """Manda tutte le foto online del codice (_1, _2, ... fino a 10). Ritorna quante."""
+    numeri = varianti_online(codice)
+    for i, n in enumerate(numeri):
+        didascalia = ("%s\n" % titolo if i == 0 else "") + "%s_%d" % (codice, n)
+        telegram(didascalia, IMG_N % (codice, n) + "?sw=1008&sh=1008")
+    return len(numeri)
+
+
 def codice_trovato(codice):
     """Ritorna il codice che ha l'immagine online (prova anche senza la V iniziale)."""
     candidati = [codice] + ([codice[1:]] if codice.startswith("V") else [])
@@ -139,17 +164,26 @@ def gestisci_messaggi(stato):
             if not codici:
                 telegram("Non trovo nessun codice. " + AIUTO)
             for c in codici:
-                if c not in stato["attesa"]:
-                    stato["attesa"][c] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                telegram("Ok, tengo d'occhio %s. Ti avviso appena esce." % c)
+                trovato = codice_trovato(c)
+                if trovato:
+                    n = invia_foto(trovato, "%s e' gia' online." % c)
+                    if n == 0:
+                        telegram("%s e' online ma non riesco a mandarti le foto." % c)
+                    if c not in stato["visti"]:
+                        stato["visti"].append(c)
+                else:
+                    if c not in stato["attesa"]:
+                        stato["attesa"][c] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    telegram("%s non e' ancora online. Lo tengo d'occhio e ti avviso appena esce." % c)
 
 
 def controlla_attesa(stato):
     for codice in list(stato["attesa"]):
         trovato = codice_trovato(codice)
         if trovato:
-            telegram("TROVATO! %s e' online.\nhttps://www.legami.com/it-it/search?q=%s" % (codice, trovato),
-                     IMG % trovato + "?sw=1008&sh=1008")
+            if invia_foto(trovato, "TROVATO! %s e' online." % codice) == 0:
+                telegram("TROVATO! %s e' online.\nhttps://www.legami.com/it-it/search?q=%s" % (codice, trovato),
+                         IMG % trovato + "?sw=1008&sh=1008")
             stato["attesa"].pop(codice)
             if codice not in stato["visti"]:
                 stato["visti"].append(codice)
