@@ -1,0 +1,27 @@
+# Esegue controlla.py ogni 15 minuti (e quando premi "Run workflow" su GitHub).
+name: Bot Legami
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: bot-legami
+  cancel-in-progress: false
+jobs:
+  controlla:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 controlla.py
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RICERCA_GENERALE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+      # Salva codici visti, codici in attesa e messaggi gia' letti
+      - run: |
+          git config user.name "bot-legami"
+          git config user.email "actions@users.noreply.github.com"
+          git add stato.json
+          git diff --cached --quiet || (git commit -m "Aggiorna stato" && git pull --rebase && git push)
