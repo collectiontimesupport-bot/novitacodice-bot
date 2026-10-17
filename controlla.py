@@ -241,8 +241,9 @@ def codici_pagine():
 def ricerca_generale(stato):
     ora = {c for c in codici_immagini() | codici_pagine() if not sul_sito(c)}
     for c in sorted(ora - set(stato["visti"])):
-        telegram("Novita' Legami: %s\nhttps://www.legami.com/it-it/search?q=%s" % (c, c),
-                 IMG % c + "?sw=1008&sh=1008")
+        if invia_foto(c, "Novita' Legami: %s" % c) == 0:
+            telegram("Novita' Legami: %s\nhttps://www.legami.com/it-it/search?q=%s" % (c, c),
+                     IMG % c + "?sw=1008&sh=1008")
         stato["attesa"].pop(c, None)
     stato["visti"] = sorted(set(stato["visti"]) | ora)
 
