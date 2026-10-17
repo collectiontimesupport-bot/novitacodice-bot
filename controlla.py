@@ -25,7 +25,27 @@ from datetime import datetime, timezone
 
 # ---------------- IMPOSTAZIONI ----------------
 # Ricerca generale: (prefisso, da, a, cifre)
-INTERVALLI = [("EP", 80, 140, 4), ("EPSET", 16, 40, 4)]
+INTERVALLI = [("EP", 1, 140, 4), ("EPSET", 1, 40, 4), ("CLB", 1, 99, 4), ("CPP", 1, 99, 4),
+              ("HUG", 1, 99, 4), ("PSQ", 1, 99, 4), ("SQP", 1, 99, 4), ("SPK", 1, 99, 4),
+              ("STG", 1, 99, 4), ("RBAG", 20, 99, 4)]
+# Codici che ci sono GIA' sul sito Collection Time (non vengono segnalati)
+SUL_SITO = {
+    "EP": "1-86,89,95,96", "EPSET": "1-17", "CLB": "1-25", "CPP": "1-34", "HUG": "1-8",
+    "PSQ": "1-9", "SQP": "1-4,6-10", "SPK": "1-13,15,17-21", "STG": "1-3", "RBAG": "0-23",
+}
+
+
+def sul_sito(codice):
+    m = re.match(r"^([A-Z]+)(\d+)$", codice)
+    if not m or m.group(1) not in SUL_SITO:
+        return False
+    n = int(m.group(2))
+    for parte in SUL_SITO[m.group(1)].split(","):
+        a, _, b = parte.partition("-")
+        if int(a) <= n <= int(b or a):
+            return True
+    return False
+
 # Pagine Legami da leggere nella ricerca generale
 PAGINE = [
     "cartoleria/scrittura/penne-cancellabili.html?sz=100",
@@ -33,7 +53,7 @@ PAGINE = [
     "in-evidenza/novita.html?sz=100",
     "search?q=natale+penne&sz=100",
 ]
-PREFISSI_PAGINE = ("EP", "EPSET", "TEP", "CPP", "CPPSET", "WIM", "HUG", "STG")
+PREFISSI_PAGINE = tuple(SUL_SITO)
 # Codici gia' noti (la ricerca generale non li segnala)
 NOTI_INIZIALI = ["EP0085", "EP0086", "EP0089", "EP0095", "EPSET0016", "EPSET0017",
                  "TEP0001", "TEP0002", "CPP0032", "CPPSET3", "WIM0001"] + \
@@ -195,7 +215,7 @@ def controlla_attesa(stato):
 
 # ---------- Ricerca generale (una volta al giorno) ----------
 def codici_immagini():
-    cod = ["%s%0*d" % (p, c, n) for p, a, b, c in INTERVALLI for n in range(a, b + 1)]
+    cod = ["%s%0*d" % (p, c, n) for p, a, b, c in INTERVALLI for n in range(a, b + 1) if not sul_sito("%s%0*d" % (p, c, n))]
     with ThreadPoolExecutor(10) as ex:
         return {c for c, ok in zip(cod, ex.map(immagine_esiste, cod)) if ok}
 
@@ -219,7 +239,7 @@ def codici_pagine():
 
 
 def ricerca_generale(stato):
-    ora = codici_immagini() | codici_pagine()
+    ora = {c for c in codici_immagini() | codici_pagine() if not sul_sito(c)}
     for c in sorted(ora - set(stato["visti"])):
         telegram("Novita' Legami: %s\nhttps://www.legami.com/it-it/search?q=%s" % (c, c),
                  IMG % c + "?sw=1008&sh=1008")
