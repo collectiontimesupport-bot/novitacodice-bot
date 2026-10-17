@@ -25,9 +25,10 @@ from datetime import datetime, timezone
 
 # ---------------- IMPOSTAZIONI ----------------
 # Ricerca generale: (prefisso, da, a, cifre)
-INTERVALLI = [("EP", 1, 140, 4), ("EPSET", 1, 40, 4), ("CLB", 1, 99, 4), ("CPP", 1, 99, 4),
-              ("HUG", 1, 99, 4), ("PSQ", 1, 99, 4), ("SQP", 1, 99, 4), ("SPK", 1, 99, 4),
-              ("STG", 1, 99, 4), ("RBAG", 20, 99, 4)]
+INTERVALLI = [("EP", 1, 200, 4), ("EPSET", 1, 200, 4), ("CLB", 1, 200, 4), ("CPP", 1, 200, 4),
+              ("HUG", 1, 200, 4), ("PSQ", 1, 200, 4), ("SQP", 1, 200, 4), ("SPK", 1, 200, 4),
+              ("STG", 1, 200, 4), ("RBAG", 20, 200, 4)]
+LIMITE_NUOVE = 50   # fin dove cerco una serie nuova (si cambia con /limite DC 20)
 # Codici che ci sono GIA' sul sito Collection Time (non vengono segnalati)
 SUL_SITO = {
     "EP": "1-86,89,95,96", "EPSET": "1-17", "CLB": "1-25", "CPP": "1-34", "HUG": "1-8",
@@ -164,7 +165,51 @@ def estrai_codici(testo):
 
 AIUTO = ("Scrivimi un codice (es. EP0090) o incolla un link Legami con il codice modificato: "
          "lo controllo di continuo e ti avviso appena l'immagine compare.\n"
-         "/lista = codici in attesa\n/togli EP0090 = smetto di controllarlo")
+         "/lista = codici in attesa\n/togli EP0090 = smetto di controllarlo\n"
+         "/serie DC 17 50 = serie nuova DC: sul sito ho i numeri fino al 17, cerca fino al 50\n"
+         "/limite DC 20 = cerca la serie DC solo fino al 20")
+
+
+def imposta_limite(prefisso, limite):
+    """Cambia fin dove il bot cerca i codici di una serie."""
+    da = 1
+    for i, (p, a, b, c) in enumerate(INTERVALLI):
+        if p == prefisso:
+            da = a
+            del INTERVALLI[i]
+            break
+    INTERVALLI.append((prefisso, da, limite, 4))
+
+
+def scansiona_serie(prefisso, da=1, a=200):
+    """Codici di una serie che esistono online (da PREFISSO0001 a PREFISSO0200)."""
+    cod = ["%s%04d" % (prefisso, n) for n in range(da, a + 1)]
+    with ThreadPoolExecutor(20) as ex:
+        return [c for c, ok in zip(cod, ex.map(immagine_esiste, cod)) if ok]
+
+
+def registra_serie(stato, codice):
+    """Se il prefisso e' nuovo (es. DC0001) cerca da 0001 a 0200 e salva la serie."""
+    m = re.match(r"^([A-Z]+)(\d+)$", codice)
+    if not m:
+        return
+    candidati = [m.group(1)] + ([m.group(1)[1:]] if m.group(1).startswith("V") else [])
+    if any(p in SUL_SITO for p in candidati):
+        return
+    for p in candidati:
+        trovati = scansiona_serie(p, 1, LIMITE_NUOVE)
+        if trovati:
+            numeri = sorted(int(c[len(p):]) for c in trovati)
+            SUL_SITO[p] = ",".join(str(n) for n in numeri)
+            stato["serie"][p] = SUL_SITO[p]
+            stato["limiti"][p] = LIMITE_NUOVE
+            imposta_limite(p, LIMITE_NUOVE)
+            telegram("Nuova serie %s registrata: online ci sono %d codici (%s%04d ... %s%04d). "
+                     "Da ora controllo ogni giorno fino a %s%04d e ti avviso dei nuovi.\n"
+                     "Per dirmi quanti ne hai sul sito e fin dove cercare: /serie %s %d %d\n"
+                     "Solo per cambiare dove cercare: /limite %s 20"
+                     % (p, len(numeri), p, numeri[0], p, numeri[-1], p, LIMITE_NUOVE, p, numeri[-1], LIMITE_NUOVE, p))
+            return
 
 
 def gestisci_messaggi(stato):
@@ -174,6 +219,36 @@ def gestisci_messaggi(stato):
         if t.startswith("/lista"):
             att = list(stato["attesa"])
             telegram("In attesa: " + (", ".join(att) if att else "nessun codice"))
+        elif t.startswith("/serie"):
+            parti = t.split()
+            m = re.match(r"[A-Za-z]+", parti[1]) if len(parti) > 1 else None
+            p = m.group(0).upper() if m else ""
+            if p not in stato["serie"]:
+                telegram("Serie sconosciuta. Mandami prima un codice della serie, es. %s0001." % (p or "DC"))
+                continue
+            nums = re.findall(r"\d+", " ".join(parti[1:]))
+            n = int(nums[0]) if nums else 0
+            limite = int(nums[1]) if len(nums) > 1 else stato["limiti"].get(p, LIMITE_NUOVE)
+            SUL_SITO[p] = stato["serie"][p] = "0-%d" % n
+            stato["limiti"][p] = limite
+            imposta_limite(p, limite)
+            nuovi = [c for c in scansiona_serie(p, 1, limite) if int(c[len(p):]) > n and c not in stato["visti"]]
+            for c in nuovi:
+                invia_foto(c, "Novita' Legami: %s" % c)
+                stato["visti"].append(c)
+            telegram("Ok: della serie %s hai sul sito fino al %d. Codici nuovi trovati: %d. "
+                     "Da ora controllo ogni giorno fino a %s%04d." % (p, n, len(nuovi), p, limite))
+        elif t.startswith("/limite"):
+            parti = t.split()
+            m = re.match(r"[A-Za-z]+", parti[1]) if len(parti) > 1 else None
+            p = m.group(0).upper() if m else ""
+            nums = re.findall(r"\d+", " ".join(parti[2:]))
+            if p not in SUL_SITO or not nums:
+                telegram("Scrivi per esempio: /limite DC 20 (la serie deve essere gia' registrata).")
+                continue
+            stato["limiti"][p] = int(nums[0])
+            imposta_limite(p, int(nums[0]))
+            telegram("Ok: la serie %s la controllo fino a %s%04d." % (p, p, int(nums[0])))
         elif t.startswith("/svuota"):
             stato["attesa"].clear()
             telegram("Fatto: non sto piu' aspettando nessun codice.")
@@ -199,6 +274,7 @@ def gestisci_messaggi(stato):
                     if c not in stato["attesa"]:
                         stato["attesa"][c] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     telegram("%s non e' ancora online. Lo tengo d'occhio e ti avviso appena esce." % c)
+                registra_serie(stato, c)
 
 
 def controlla_attesa(stato):
@@ -216,7 +292,7 @@ def controlla_attesa(stato):
 # ---------- Ricerca generale (una volta al giorno) ----------
 def codici_immagini():
     cod = ["%s%0*d" % (p, c, n) for p, a, b, c in INTERVALLI for n in range(a, b + 1) if not sul_sito("%s%0*d" % (p, c, n))]
-    with ThreadPoolExecutor(10) as ex:
+    with ThreadPoolExecutor(20) as ex:
         return {c for c, ok in zip(cod, ex.map(immagine_esiste, cod)) if ok}
 
 
@@ -257,6 +333,13 @@ def main():
         stato = {"visti": list(NOTI_INIZIALI), "attesa": {}, "ultimo_id": 0}
         telegram("Bot Legami attivo. " + AIUTO)
 
+    stato.setdefault("serie", {})
+    stato.setdefault("limiti", {})
+    for p, v in stato["serie"].items():
+        SUL_SITO[p] = v
+        imposta_limite(p, LIMITE_NUOVE)
+    for p, l in stato["limiti"].items():
+        imposta_limite(p, l)
     inizio = time.time()
     durata = int(os.environ.get("DURATA_SECONDI", "0"))
 
