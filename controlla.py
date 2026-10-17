@@ -19,7 +19,7 @@ Per cambiare cosa cerca nella ricerca generale basta modificare "IMPOSTAZIONI".
 Uso:  python3 controlla.py            (normale)
       python3 controlla.py --prova    (non invia nulla a Telegram, stampa soltanto)
 """
-import json, os, re, sys, urllib.parse, urllib.request
+import json, os, re, sys, time, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -121,9 +121,10 @@ def leggi_messaggi(ultimo_id):
     """Messaggi nuovi scritti dall'utente al bot. Ritorna (lista testi, nuovo ultimo_id)."""
     if PROVA:
         return json.loads(os.environ.get("TEST_MESSAGGI", "[]")), ultimo_id
+    extra = [x.strip() for x in os.environ.pop("MESSAGGI_EXTRA", "").split(";") if x.strip()]
     url = API + "getUpdates?timeout=0&offset=%d" % (ultimo_id + 1)
     dati = json.loads(scarica(url))
-    testi = []
+    testi = list(extra)
     for u in dati.get("result", []):
         ultimo_id = max(ultimo_id, u["update_id"])
         m = u.get("message") or {}
@@ -153,6 +154,9 @@ def gestisci_messaggi(stato):
         if t.startswith("/lista"):
             att = list(stato["attesa"])
             telegram("In attesa: " + (", ".join(att) if att else "nessun codice"))
+        elif t.startswith("/svuota"):
+            stato["attesa"].clear()
+            telegram("Fatto: non sto piu' aspettando nessun codice.")
         elif t.startswith("/togli"):
             for c in estrai_codici(t):
                 stato["attesa"].pop(c, None)
@@ -232,12 +236,23 @@ def main():
         stato = {"visti": list(NOTI_INIZIALI), "attesa": {}, "ultimo_id": 0}
         telegram("Bot Legami attivo. " + AIUTO)
 
+    inizio = time.time()
+    durata = int(os.environ.get("DURATA_SECONDI", "0"))
+
     gestisci_messaggi(stato)
     controlla_attesa(stato)
 
     adesso = datetime.now(timezone.utc)
-    if os.environ.get("RICERCA_GENERALE") == "1" or (adesso.hour == ORA_RICERCA_GENERALE and adesso.minute < 15):
+    if os.environ.get("RICERCA_GENERALE") == "1" or (adesso.hour == ORA_RICERCA_GENERALE and adesso.minute < 5):
         ricerca_generale(stato)
+
+    ultimo_controllo = time.time()
+    while time.time() - inizio < durata:
+        time.sleep(5)
+        gestisci_messaggi(stato)
+        if time.time() - ultimo_controllo > 120:
+            controlla_attesa(stato)
+            ultimo_controllo = time.time()
 
     json.dump(stato, open(FILE_STATO, "w"), indent=1)
     print("In attesa:", list(stato["attesa"]))
