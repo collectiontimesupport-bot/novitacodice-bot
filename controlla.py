@@ -68,7 +68,7 @@ def immagine_esiste(codice):
 
 
 IMG_N = IMG.replace("%s_1.jpg", "%s_%d.jpg")
-MAX_FOTO = 10
+MAX_FOTO = 15
 
 
 def varianti_online(codice):
@@ -79,7 +79,7 @@ def varianti_online(codice):
         except Exception:
             return False
     numeri = list(range(1, MAX_FOTO + 1))
-    with ThreadPoolExecutor(10) as ex:
+    with ThreadPoolExecutor(15) as ex:
         return [n for n, ok in zip(numeri, ex.map(prova, numeri)) if ok]
 
 
